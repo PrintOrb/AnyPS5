@@ -131,6 +131,15 @@ endforeach()
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 
 if(BUILD_TESTING)
+    if(NOT WIN32)
+        add_test_executable(socketpair_smoke_tests
+            ${PROJECT_SOURCE_DIR}/tests/compat/socketpair_smoke.cpp)
+        target_link_libraries(socketpair_smoke_tests PRIVATE ${CMAKE_DL_LIBS})
+        add_dependencies(socketpair_smoke_tests libs)
+        add_test(NAME socketpair_smoke
+            COMMAND socketpair_smoke_tests ${PATCHED_DIR}/libkernel.prx)
+        set_tests_properties(socketpair_smoke PROPERTIES TIMEOUT 20)
+    endif()
     add_test_executable(guest_offline_imports_tests tests/GuestOfflineImports.cpp)
     target_include_directories(guest_offline_imports_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(guest_offline_imports_tests PRIVATE libSceHttp libSceNpEntitlementAccess libSceRudp libc)
