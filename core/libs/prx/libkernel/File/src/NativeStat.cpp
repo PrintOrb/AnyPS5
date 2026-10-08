@@ -11,6 +11,9 @@ using NativeStat = struct __stat64;
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     return _wstat64(p.wstring().c_str(), st);
 }
+static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
+    return DoStat(p, st);
+}
 static int DoFstat(int fd, NativeStat* st) {
     if (const auto directory = File::DirectoryDescriptorPath(fd)) return DoStat(*directory, st);
     return _fstat64(fd, st);
@@ -20,6 +23,9 @@ static int DoFstat(int fd, NativeStat* st) {
 using NativeStat = struct stat;
 static int DoStat(const std::filesystem::path& p, NativeStat* st) {
     return ::stat(p.c_str(), st);
+}
+static int DoLstat(const std::filesystem::path& p, NativeStat* st) {
+    return ::lstat(p.c_str(), st);
 }
 static int DoFstat(int fd, NativeStat* st) {
     return ::fstat(fd, st);
@@ -82,6 +88,13 @@ void FillFileStat(const std::filesystem::path& nativePath, FileStat* sb) {
         throw std::runtime_error(std::string("FillFileStat: stat failed for ") + nativePath.string());
     }
     CopyNativeStat(st, sb);
+}
+
+bool FillFileLstat(const std::filesystem::path& nativePath, FileStat* sb) {
+    NativeStat st{};
+    if (DoLstat(nativePath, &st) != 0) return false;
+    CopyNativeStat(st, sb);
+    return true;
 }
 
 void FillFileStat(int nativeDescriptor, FileStat* sb) {

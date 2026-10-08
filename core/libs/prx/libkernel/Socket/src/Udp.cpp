@@ -11,6 +11,7 @@
 #include <cerrno>
 #endif
 #include "prx/libc/include/general/VabiMacros.hpp"
+#include "prx/libc/include/GuestArena.hpp"
 #include "prx/libkernel/Socket/include/SocketRuntime.hpp"
 #include <algorithm>
 #include <chrono>
@@ -170,6 +171,40 @@ void GuestAddress(const sockaddr_storage& native, void* output, std::uint32_t* l
 }
 }
 
+std::int64_t GuestSockets::Read(
+    int descriptor, void* buffer, std::size_t count) {
+
+    const auto socket = Lookup(descriptor);
+    if (!socket) return -1;
+    if (!buffer && count) return Fail(14);
+    if (count > INT_MAX) return Fail(40);
+
+    const auto result = ::recv(
+        socket->value,
+        static_cast<char*>(buffer),
+        static_cast<int>(count),
+        0);
+
+    return result < 0 ? Fail(NativeError()) : result;
+}
+
+std::int64_t GuestSockets::Write(
+    int descriptor, const void* buffer, std::size_t count) {
+
+    const auto socket = Lookup(descriptor);
+    if (!socket) return -1;
+    if (!buffer && count) return Fail(14);
+    if (count > INT_MAX) return Fail(40);
+
+    const auto result = ::send(
+        socket->value,
+        static_cast<const char*>(buffer),
+        static_cast<int>(count),
+        NativeSendFlags(GuestNoSignal));
+
+    return result < 0 ? Fail(NativeError()) : result;
+}
+
 int GuestSockets::Close(int descriptor) {
     std::lock_guard lock(socketsMutex);
     return sockets.erase(descriptor) ? 0 : Fail(9);
@@ -262,6 +297,70 @@ int APS5_VABI getsockopt_nid_postfix(int descriptor, int level, int option,
     *length = sizeof(result);
     return 0;
 }
+
+int APS5_VABI socketpair_nid_postfix(
+    int family, int type, int protocol, int pair[2]) {
+
+    if (family != 1) return Fail(47);
+    if (type != 1 && type != 2) return Fail(43);
+    if (protocol != 0) return Fail(43);
+    if (!pair) return Fail(14);
+
+#ifdef _WIN32
+    return Fail(45);
+#else
+    const GuestArena::HostWrite output(pair, sizeof(int) * 2);
+    if (!output.Open()) return Fail(14);
+
+    const int nativeType = type == 1 ? SOCK_STREAM : SOCK_DGRAM;
+    int native[2] = {-1, -1};
+
+    if (::socketpair(AF_UNIX, nativeType, 0, native) != 0)
+        return Fail(NativeError());
+
+    Socket leftGuard(native[0], family, type);
+    Socket rightGuard(native[1], family, type);
+
+    try {
+        auto left = std::make_shared<Socket>(native[0], family, type);
+        leftGuard.value = Invalid;
+
+        auto right = std::make_shared<Socket>(native[1], family, type);
+        rightGuard.value = Invalid;
+
+        std::lock_guard lock(socketsMutex);
+
+        if (nextDescriptor > INT_MAX - 2)
+            return Fail(24);
+
+        const int first = nextDescriptor;
+        const int second = first + 1;
+
+        const auto [firstIt, firstInserted] = sockets.emplace(first, left);
+        if (!firstInserted) return Fail(24);
+        try {
+            const auto [secondIt, secondInserted] = sockets.emplace(second, right);
+            (void)secondIt;
+            if (!secondInserted) {
+                sockets.erase(firstIt);
+                return Fail(24);
+            }
+        } catch (...) {
+            sockets.erase(firstIt);
+            throw;
+        }
+
+        nextDescriptor += 2;
+        pair[0] = first;
+        pair[1] = second;
+        return 0;
+
+    } catch (const std::bad_alloc&) {
+        return Fail(12);
+    }
+#endif
+}
+
 int APS5_VABI socket_nid_postfix(int family, int type, int protocol) {
     if (family != 2 && family != 28) return Fail(47);
     const int nativeType = type == 1 ? SOCK_STREAM : type == 2 ? SOCK_DGRAM : -1;

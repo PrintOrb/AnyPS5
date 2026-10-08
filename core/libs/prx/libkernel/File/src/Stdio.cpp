@@ -400,6 +400,22 @@ int APS5_VABI stat_nid_postfix(const char* path, FileStat* sb) {
     return PosixResult(sceKernelStat(path, sb));
 }
 
+int APS5_VABI lstat_nid_postfix(const char* path, FileStat* sb) {
+    if (sb == nullptr) return PosixFailure(GUEST_EFAULT);
+    if (const int error = PathError(path)) return PosixFailure(error);
+    const auto native = ResolvePath_nid_no_patch(path);
+    if (!File::FillFileLstat(native, sb)) {
+        const int error = errno;
+        if (error == ENOENT) return PosixFailure(GUEST_ENOENT);
+        if (error == EACCES) return PosixFailure(13);
+        if (error == ENOTDIR) return PosixFailure(GUEST_ENOTDIR);
+        if (error == ELOOP) return PosixFailure(62);
+        if (error == ENAMETOOLONG) return PosixFailure(GUEST_ENAMETOOLONG);
+        return PosixFailure(GUEST_EIO);
+    }
+    return 0;
+}
+
 int APS5_VABI unlink_nid_postfix(const char* path) {
     if (const int error = PathError(path)) return PosixFailure(error);
     return PosixResult(sceKernelUnlink(path));
